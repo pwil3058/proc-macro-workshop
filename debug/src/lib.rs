@@ -9,6 +9,8 @@ use syn;
 pub fn derive(input: TokenStream) -> TokenStream {
     let parsed_input: syn::DeriveInput = syn::parse_macro_input!(input);
     let input_name = parsed_input.ident;
+    let generics = add_debug_trait_bounds(parsed_input.generics);
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let mut field_names = vec![];
     let mut format_str: String = input_name.to_string() + " {{";
     match parsed_input.data {
@@ -57,7 +59,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     format_str += " }}";
 
     let tokens = quote! {
-        impl std::fmt::Debug for #input_name {
+        impl #impl_generics std::fmt::Debug for #input_name #ty_generics #where_clause {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, #format_str #(#field_names)*)
             }
@@ -65,4 +67,13 @@ pub fn derive(input: TokenStream) -> TokenStream {
     };
 
     proc_macro::TokenStream::from(tokens)
+}
+
+fn add_debug_trait_bounds(mut generics: syn::Generics) -> syn::Generics {
+    for param in &mut generics.params {
+        if let syn::GenericParam::Type(ref mut type_param) = *param {
+            type_param.bounds.push(syn::parse_quote!(std::fmt::Debug));
+        }
+    }
+    generics
 }
