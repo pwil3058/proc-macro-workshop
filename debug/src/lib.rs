@@ -5,7 +5,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn;
 
-#[proc_macro_derive(CustomDebug)]
+#[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let parsed_input: syn::DeriveInput = syn::parse_macro_input!(input);
     let input_name = parsed_input.ident;
@@ -15,11 +15,35 @@ pub fn derive(input: TokenStream) -> TokenStream {
         syn::Data::Struct(s) => {
             if let syn::Fields::Named(fields) = s.fields {
                 for (i, field) in fields.named.iter().enumerate() {
+                    let mut field_format: Option<String> = None;
+                    for attr in field.attrs.iter() {
+                        if attr.path.is_ident("debug") {
+                            if let Ok(meta) = attr.parse_meta() {
+                                match meta {
+                                    syn::Meta::List(_list) => println!("list"),
+                                    syn::Meta::Path(_path) => println!("path"),
+                                    syn::Meta::NameValue(nv) => {
+                                        if let syn::Lit::Str(lit_str) = &nv.lit {
+                                            field_format = Some(lit_str.value());
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let field_name = field.ident.as_ref().unwrap();
-                    if i == 0 {
-                        format_str += &format!(" {}: {{:?}}", field_name.to_string());
+                    if let Some(ff) = field_format {
+                        if i == 0 {
+                            format_str += &format!(" {}: {}", field_name.to_string(), ff);
+                        } else {
+                            format_str += &format!(", {}: {}", field_name.to_string(), ff);
+                        }
                     } else {
-                        format_str += &format!(", {}: {{:?}}", field_name.to_string());
+                        if i == 0 {
+                            format_str += &format!(" {}: {{:?}}", field_name.to_string());
+                        } else {
+                            format_str += &format!(", {}: {{:?}}", field_name.to_string());
+                        }
                     }
                     let token = quote! {
                         , self.#field_name
