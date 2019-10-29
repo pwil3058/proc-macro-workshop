@@ -33,7 +33,7 @@ pub struct Command {
     #[builder(each = "arg")]
     args: Vec<String>,
     #[builder(each = "env")]
-    env: Vec<String>,
+    envs: Vec<String>,
     current_dir: Option<String>,
 }
 
@@ -43,7 +43,7 @@ fn main() {
         .arg("build".to_owned())
         .arg("--release".to_owned())
         .build()
-        .unwrap();
+        .expect("should build");
 
     assert_eq!(command.executable, "cargo");
 }

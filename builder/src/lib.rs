@@ -4,9 +4,9 @@ extern crate proc_macro2;
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, PathArguments, Type};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, Meta, PathArguments, Type};
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let parsed_input: DeriveInput = parse_macro_input!(input);
     let struct_name = parsed_input.ident;
@@ -20,8 +20,48 @@ pub fn derive(input: TokenStream) -> TokenStream {
         if let Fields::Named(fields) = s.fields {
             for field in fields.named.iter() {
                 let f_name = field.ident.as_ref().unwrap();
+                println!("{:?}", f_name);
+                println!("attributes: {:?}", field.attrs.len());
+                let mut each: Option<syn::Ident> = None;
+                for attr in field.attrs.iter() {
+                    if attr.path.is_ident("builder") {
+                        if let Ok(meta) = attr.parse_meta() {
+                            match meta {
+                                Meta::List(list) => {
+                                    println!("list: {:?}", list.nested.len());
+                                    for item in list.nested.iter() {
+                                        match item {
+                                            syn::NestedMeta::Meta(imeta) => {
+                                                println!("meta");
+                                                match imeta {
+                                                    Meta::NameValue(inv) => {
+                                                        println!("inv: {:?}", inv.path.get_ident(),);
+                                                        if let syn::Lit::Str(lit_str) = &inv.lit {
+                                                            println!(
+                                                                "string: {:?}",
+                                                                lit_str.value()
+                                                            );
+                                                            each = Some(syn::Ident::new(
+                                                                &lit_str.value(),
+                                                                lit_str.span(),
+                                                            ));
+                                                        } else {
+                                                            panic!("panic #4")
+                                                        }
+                                                    }
+                                                    _ => panic!("panic #3"),
+                                                }
+                                            }
+                                            _ => panic!("panic #2"),
+                                        }
+                                    }
+                                }
+                                _ => panic!("panic #1"),
+                            }
+                        }
+                    }
+                }
                 if let Type::Path(ref f_path_type) = field.ty {
-                    println!("{:?}", f_name);
                     let token = quote! {
                         #f_name: None,
                     };
@@ -61,7 +101,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
                             };
                             build_tokens.push(token);
                         }
-                        _ => {
+                        other => {
+                            println!("other: {:?}", other);
                             let f_type = f_path_type;
                             let token = quote! {
                                 #f_name: Option<#f_type>,
@@ -74,16 +115,40 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                 }
                             };
                             fn_tokens.push(token);
-                            let msg = format!("'{}' field has not been set", stringify!(#f_name));
-                            let token = quote! {
-                                let #f_name;
-                                if let Some(ref val) = self.#f_name {
-                                    #f_name = val.clone();
-                                } else {
-                                    return Err(#msg.to_string());
+                            if let Some(each) = each {
+                                if other != "Vec" {
+                                    panic!("expected 'Vec'");
                                 };
-                            };
-                            build_tokens.push(token);
+                                let token = quote! {
+                                    pub fn #each(&mut self, #each: String) -> &mut Self {
+                                        let v = self.#f_name.get_or_insert(vec![]);
+                                        (*v).push(#each);
+                                        self
+                                    }
+                                };
+                                fn_tokens.push(token);
+                                let token = quote! {
+                                    let #f_name;
+                                    if let Some(ref val) = self.#f_name {
+                                        #f_name = val.clone();
+                                    } else {
+                                        #f_name = vec![];
+                                    };
+                                };
+                                build_tokens.push(token);
+                            } else {
+                                let msg =
+                                    format!("'{}' field has not been set", stringify!(#f_name));
+                                let token = quote! {
+                                    let #f_name;
+                                    if let Some(ref val) = self.#f_name {
+                                        #f_name = val.clone();
+                                    } else {
+                                        return Err(#msg.to_string());
+                                    };
+                                };
+                                build_tokens.push(token);
+                            }
                         }
                     }
                 } else {
