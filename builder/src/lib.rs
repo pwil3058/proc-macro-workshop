@@ -3,7 +3,7 @@ extern crate proc_macro2;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Meta, PathArguments, Type};
 
 #[proc_macro_derive(Builder, attributes(builder))]
@@ -36,6 +36,16 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                                 match imeta {
                                                     Meta::NameValue(inv) => {
                                                         println!("inv: {:?}", inv.path.get_ident(),);
+                                                        if !inv.path.is_ident("each") {
+                                                            let tokens = quote_spanned! {inv.path.get_ident().unwrap().span()=>
+                                                            compile_error!(
+                                                                "expected `builder(each = \"...\")`"
+                                                            );
+                                                            };
+                                                            return proc_macro::TokenStream::from(
+                                                                tokens,
+                                                            );
+                                                        };
                                                         if let syn::Lit::Str(lit_str) = &inv.lit {
                                                             println!(
                                                                 "string: {:?}",
@@ -63,7 +73,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
                 if let Type::Path(ref f_path_type) = field.ty {
                     let token = quote! {
-                        #f_name: None,
+                        #f_name: std::option::Option::None,
                     };
                     init_tokens.push(token);
                     let token = quote! {
@@ -81,12 +91,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                 };
                             println!("option");
                             let token = quote! {
-                                #f_name: Option<#f_type>,
+                                #f_name: std::option::Option<#f_type>,
                             };
                             declr_tokens.push(token);
                             let token = quote! {
                                 pub fn #f_name(&mut self, #f_name: #f_type) -> &mut Self {
-                                    self.#f_name = Some(#f_name);
+                                    self.#f_name = std::option::Option::Some(#f_name);
                                     self
                                 }
                             };
@@ -94,9 +104,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
                             let token = quote! {
                                 let #f_name;
                                 if let Some(ref val) = self.#f_name {
-                                    #f_name = Some(val.clone());
+                                    #f_name = std::option::Option::Some(val.clone());
                                 } else {
-                                    #f_name = None
+                                    #f_name = std::option::Option::None
                                 };
                             };
                             build_tokens.push(token);
@@ -105,7 +115,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                             println!("other: {:?}", other);
                             let f_type = f_path_type;
                             let token = quote! {
-                                #f_name: Option<#f_type>,
+                                #f_name: std::option::Option<#f_type>,
                             };
                             declr_tokens.push(token);
                             let token = quote! {
@@ -129,7 +139,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                 fn_tokens.push(token);
                                 let token = quote! {
                                     let #f_name;
-                                    if let Some(ref val) = self.#f_name {
+                                    if let std::option::Option::Some(ref val) = self.#f_name {
                                         #f_name = val.clone();
                                     } else {
                                         #f_name = vec![];
@@ -141,10 +151,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                     format!("'{}' field has not been set", stringify!(#f_name));
                                 let token = quote! {
                                     let #f_name;
-                                    if let Some(ref val) = self.#f_name {
+                                    if let std::option::Option::Some(ref val) = self.#f_name {
                                         #f_name = val.clone();
                                     } else {
-                                        return Err(#msg.to_string());
+                                        return std::result::Result::Err(#msg.to_string());
                                     };
                                 };
                                 build_tokens.push(token);
@@ -178,9 +188,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
         impl #builder_name {
             #(#fn_tokens)*
 
-            pub fn build(&mut self) -> Result<#struct_name, String> {
+            pub fn build(&mut self) -> std::result::Result<#struct_name, String> {
                 #(#build_tokens)*
-                Ok(#struct_name {
+                std::result::Result::Ok(#struct_name {
                     #(#list_tokens)*
                 })
             }
