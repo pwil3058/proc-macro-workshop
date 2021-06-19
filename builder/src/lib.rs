@@ -29,15 +29,23 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let mut each: Option<syn::Ident> = None;
         for attr in field.attrs.iter().filter(|a| a.path.is_ident("builder")) {
             match attr.parse_meta() {
-                Ok(syn::Meta::List(syn::MetaList { ref nested, .. })) => {
-                    assert_eq!(nested.len(), 1);
-                    match nested.first() {
+                Ok(syn::Meta::List(ref list)) => {
+                    //syn::MetaList { ref nested, .. })) => {
+                    assert_eq!(list.nested.len(), 1);
+                    match list.nested.first() {
                         Some(syn::NestedMeta::Meta(syn::Meta::NameValue(syn::MetaNameValue {
                             ref path,
                             ref lit,
                             ..
                         }))) => {
-                            assert!(path.is_ident("each"));
+                            if !path.is_ident("each") {
+                                return syn::Error::new_spanned(
+                                    list,
+                                    "expected `builder(each = \"...\")`",
+                                )
+                                .to_compile_error()
+                                .into();
+                            }
                             if let syn::Lit::Str(ref lit_str) = lit {
                                 each = Some(syn::Ident::new(&lit_str.value(), lit_str.span()))
                             } else {
