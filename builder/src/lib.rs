@@ -141,7 +141,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         impl #builder_name {
             #(#fn_tokens)*
 
-            pub fn build(&self) -> Result<#struct_name, Box<dyn std::error::Error>> {
+            pub fn build(&self) -> std::result::Result<#struct_name, std::boxed::Box<dyn std::error::Error>> {
                 #(#build_tokens)*
 
                 Ok(#struct_name{#(#field_name_tokens)*})
