@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use proc_macro2;
 use quote::quote;
-use syn::parse_macro_input;
 use syn::spanned::Spanned;
+use syn::{parse_macro_input, parse_quote};
 
 fn fail(span: proc_macro2::Span, msg: &str) -> TokenStream {
     syn::Error::new(span, msg).into_compile_error().into()
@@ -10,7 +10,7 @@ fn fail(span: proc_macro2::Span, msg: &str) -> TokenStream {
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
-    let ast = parse_macro_input!(input as syn::DeriveInput);
+    let mut ast = parse_macro_input!(input as syn::DeriveInput);
 
     let struct_name = &ast.ident;
 
@@ -45,7 +45,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
             match attribute.parse_meta() {
                 Ok(syn::Meta::NameValue(syn::MetaNameValue { ref lit, .. })) => {
                     if let syn::Lit::Str(ref lit) = lit {
-                        eprintln!("LIT: {:#?}", lit.value());
                         quote! {
                             .field(stringify!(#field_name), &format_args!(#lit, &self.#field_name))
                         }
@@ -61,9 +60,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
         }
     });
-
+    for param in &mut ast.generics.params {
+        if let syn::GenericParam::Type(ref mut type_param) = *param {
+            type_param.bounds.push(parse_quote!(std::fmt::Debug));
+        }
+    }
+    let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
     let tokens = quote! {
-        impl std::fmt::Debug for #struct_name {
+        impl#impl_generics std::fmt::Debug for #struct_name #ty_generics #where_clause {
             fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 fmt.debug_struct(stringify!(#struct_name))
                     #(#field_tokens)*
