@@ -1,8 +1,14 @@
 use proc_macro::TokenStream;
+use proc_macro2;
 use quote::quote;
 use syn::parse_macro_input;
+use syn::spanned::Spanned;
 
-#[proc_macro_derive(CustomDebug)]
+fn fail(span: proc_macro2::Span, msg: &str) -> TokenStream {
+    syn::Error::new(span, msg).into_compile_error().into()
+}
+
+#[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as syn::DeriveInput);
 
@@ -13,13 +19,46 @@ pub fn derive(input: TokenStream) -> TokenStream {
             fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
             ..
         }) => named,
-        _ => panic!("\"#[derive(Builder)]\" only implemented for structs with named fields"),
+        _ => {
+            return fail(
+                ast.ident.span(),
+                "\"#[derive(CustomDebug)]\" only implemented for structs with named fields",
+            )
+        }
     };
 
     let field_tokens = fields.iter().map(|field| {
         let field_name = field.ident.as_ref().unwrap();
-        quote! {
-            .field(stringify!(#field_name), &self.#field_name)
+        let attributes: Vec<&syn::Attribute> = field
+            .attrs
+            .iter()
+            .filter(|a| a.path.is_ident("debug"))
+            .collect();
+        if attributes.len() > 1 {
+            let msg = format!(
+                "multiple 'debug' attributes for {}",
+                stringify!(#field_name)
+            );
+            return fail(attributes[1].span(), &msg).into();
+        };
+        if let Some(attribute) = attributes.first() {
+            match attribute.parse_meta() {
+                Ok(syn::Meta::NameValue(syn::MetaNameValue { ref lit, .. })) => {
+                    if let syn::Lit::Str(ref lit) = lit {
+                        eprintln!("LIT: {:#?}", lit.value());
+                        quote! {
+                            .field(stringify!(#field_name), &format_args!(#lit, &self.#field_name))
+                        }
+                    } else {
+                        return fail(lit.span(), "expected string literal").into();
+                    }
+                }
+                _ => return fail(attribute.span(), "expected #[debug = \"...\"]").into(),
+            }
+        } else {
+            quote! {
+                .field(stringify!(#field_name), &self.#field_name)
+            }
         }
     });
 
