@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2;
 use quote::quote;
+use std::collections::hash_set::*;
 use syn::spanned::Spanned;
 use syn::{parse_macro_input, parse_quote};
 
@@ -27,25 +28,17 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
     };
 
-    let generic_idents: Vec<syn::Ident> = ast
+    let generic_idents: HashSet<syn::Ident> = ast
         .generics
         .type_params()
         .map(|t| t.ident.clone())
         .collect();
 
-    let mut viable_params = vec![];
+    let mut viable_params: HashSet<syn::Ident> = HashSet::new();
     let mut field_tokens = vec![];
     for field in fields.iter() {
         let field_name = field.ident.as_ref().unwrap();
-        if let syn::Type::Path(syn::TypePath { ref path, .. }) = field.ty {
-            if let Some(segment) = path.segments.last() {
-                if generic_idents.contains(&segment.ident) {
-                    viable_params.push(segment.ident.clone())
-                } else if segment.ident != "PhantomData" {
-                    //eprintln!("VIABLE: {:?}", segment);
-                }
-            }
-        }
+        viable_params = &viable_params | &used_params(&field.ty, &generic_idents);
         let attributes: Vec<&syn::Attribute> = field
             .attrs
             .iter()
@@ -96,4 +89,30 @@ pub fn derive(input: TokenStream) -> TokenStream {
     };
 
     tokens.into()
+}
+
+fn used_params(ty: &syn::Type, params: &HashSet<syn::Ident>) -> HashSet<syn::Ident> {
+    let mut set = HashSet::new();
+    if let syn::Type::Path(syn::TypePath { ref path, .. }) = ty {
+        if let Some(segment) = path.segments.last() {
+            if segment.ident == "PhantomData" {
+                return set;
+            }
+            if path.segments.len() == 1 && params.contains(&segment.ident) {
+                set.insert(segment.ident.clone());
+            }
+            if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                ref args,
+                ..
+            }) = segment.arguments
+            {
+                for arg in args {
+                    if let syn::GenericArgument::Type(ty) = arg {
+                        set = &set | &used_params(ty, params);
+                    }
+                }
+            }
+        }
+    }
+    set
 }
