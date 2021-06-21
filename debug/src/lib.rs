@@ -28,6 +28,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
     };
 
+    //eprintln!("Generics: {:#?}", ast.generics);
     let generic_idents: HashSet<syn::Ident> = ast
         .generics
         .type_params()
@@ -54,15 +55,11 @@ pub fn derive(input: TokenStream) -> TokenStream {
         if let Some(attribute) = attributes.first() {
             match attribute.parse_meta() {
                 Ok(syn::Meta::NameValue(syn::MetaNameValue { ref lit, .. })) => {
-                    if let syn::Lit::Str(ref lit) = lit {
-                        field_tokens.push(quote! {
-                            .field(stringify!(#field_name), &format_args!(#lit, &self.#field_name))
-                        });
-                    } else {
-                        return fail(lit.span(), "expected string literal").into();
-                    }
+                    field_tokens.push(quote! {
+                        .field(stringify!(#field_name), &format_args!(#lit, &self.#field_name))
+                    });
                 }
-                _ => return fail(attribute.span(), "expected #[debug = \"...\"]").into(),
+                _ => return fail(attribute.tokens.span(), "expected #[debug = \"...\"]").into(),
             }
         } else {
             field_tokens.push(quote! {
