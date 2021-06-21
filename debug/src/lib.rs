@@ -15,6 +15,25 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let struct_name = &ast.ident;
 
+    let attributes: Vec<&syn::Attribute> = ast
+        .attrs
+        .iter()
+        .filter(|a| a.path.is_ident("debug"))
+        .collect();
+    if attributes.len() > 1 {
+        return fail(attributes[1].span(), "multiple 'debug' attributes").into();
+    };
+    if let Some(attribute) = attributes.first() {
+        match attribute.parse_meta() {
+            Ok(syn::Meta::List(syn::MetaList { ref nested, .. })) => {
+                for bound in nested {
+                    eprintln!("bound: {:#?}", bound);
+                }
+            }
+            _ => return fail(attribute.span(), "expected #[debug(bound = \"...\")]"),
+        }
+    }
+
     let fields = match &ast.data {
         syn::Data::Struct(syn::DataStruct {
             fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
@@ -88,24 +107,43 @@ pub fn derive(input: TokenStream) -> TokenStream {
     tokens.into()
 }
 
+fn segments_match_tail(
+    segments: &syn::punctuated::Punctuated<syn::PathSegment, syn::token::Colon2>,
+    names: &[&str],
+) -> bool {
+    if segments.len() > 0 && segments.len() <= names.len() {
+        let start = names.len() - segments.len();
+        segments
+            .iter()
+            .map(|s| &s.ident)
+            .zip(names[start..].iter())
+            .all(|(a, b)| a == b)
+    } else {
+        false
+    }
+}
+
+fn is_phantom_data_type(path: &syn::Path) -> bool {
+    segments_match_tail(&path.segments, &["std", "marker", "PhantomData"])
+}
+
 fn used_params(ty: &syn::Type, params: &HashSet<syn::Ident>) -> HashSet<syn::Ident> {
     let mut set = HashSet::new();
     if let syn::Type::Path(syn::TypePath { ref path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "PhantomData" {
-                return set;
-            }
-            if path.segments.len() == 1 && params.contains(&segment.ident) {
-                set.insert(segment.ident.clone());
-            }
-            if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
-                ref args,
-                ..
-            }) = segment.arguments
-            {
-                for arg in args {
-                    if let syn::GenericArgument::Type(ty) = arg {
-                        set = &set | &used_params(ty, params);
+        if !is_phantom_data_type(path) {
+            if let Some(segment) = path.segments.last() {
+                if path.segments.len() == 1 && params.contains(&segment.ident) {
+                    set.insert(segment.ident.clone());
+                }
+                if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                    ref args,
+                    ..
+                }) = segment.arguments
+                {
+                    for arg in args {
+                        if let syn::GenericArgument::Type(ty) = arg {
+                            set = &set | &used_params(ty, params);
+                        }
                     }
                 }
             }

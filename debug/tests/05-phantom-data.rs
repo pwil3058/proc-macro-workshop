@@ -50,13 +50,13 @@
 
 use derive_debug::CustomDebug;
 use std::fmt::Debug;
-use std::marker::PhantomData;
+use std::marker;
 
 type S = String;
 
 #[derive(CustomDebug)]
 pub struct Field<T> {
-    marker: PhantomData<T>,
+    marker: marker::PhantomData<T>,
     string: S,
     #[debug = "0b{:08b}"]
     bitmask: u8,
@@ -68,6 +68,6 @@ fn main() {
     // Does not implement Debug.
     struct NotDebug;
 
-    assert_debug::<PhantomData<NotDebug>>();
+    assert_debug::<marker::PhantomData<NotDebug>>();
     assert_debug::<Field<NotDebug>>();
 }

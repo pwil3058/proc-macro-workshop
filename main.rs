@@ -7,22 +7,31 @@
 //     $ cargo run
 
 use derive_debug::CustomDebug;
+use std::fmt::Debug;
 
-#[derive(CustomDebug)]
-pub struct Field {
-    name: &'static str,
-    #[debug = "0b{:08b}"]
-    bitmask: u8,
+pub trait Trait {
+    type Value;
 }
 
+#[derive(CustomDebug)]
+#[debug(bound = "T::Value: Debug")]
+pub struct Wrapper<T: Trait> {
+    field: Field<T>,
+}
+
+#[derive(CustomDebug)]
+struct Field<T: Trait> {
+    values: Vec<T::Value>,
+}
+
+fn assert_debug<F: Debug>() {}
+
 fn main() {
-    let f = Field {
-        name: "F",
-        bitmask: 0b00011100,
-    };
+    struct Id;
 
-    let debug = format!("{:?}", f);
-    let expected = r#"Field { name: "F", bitmask: 0b00011100 }"#;
+    impl Trait for Id {
+        type Value = u8;
+    }
 
-    assert_eq!(debug, expected);
+    assert_debug::<Wrapper<Id>>();
 }
