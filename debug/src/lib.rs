@@ -34,6 +34,22 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
     }
 
+    let generic_idents: HashSet<syn::Ident> = ast
+        .generics
+        .type_params()
+        .map(|t| t.ident.clone())
+        .collect();
+
+    let mut where_predicates: HashSet<syn::WherePredicate> =
+        if let Some(where_clause) = &ast.generics.where_clause {
+            where_clause.predicates.iter().cloned().collect()
+        } else {
+            HashSet::new()
+        };
+
+    let mut viable_params: HashSet<syn::Ident> = HashSet::new();
+    let mut field_tokens = vec![];
+
     let fields = match &ast.data {
         syn::Data::Struct(syn::DataStruct {
             fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
@@ -47,18 +63,11 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
     };
 
-    //eprintln!("Generics: {:#?}", ast.generics);
-    let generic_idents: HashSet<syn::Ident> = ast
-        .generics
-        .type_params()
-        .map(|t| t.ident.clone())
-        .collect();
-
-    let mut viable_params: HashSet<syn::Ident> = HashSet::new();
-    let mut field_tokens = vec![];
     for field in fields.iter() {
         let field_name = field.ident.as_ref().unwrap();
         viable_params = &viable_params | &used_params(&field.ty, &generic_idents);
+        where_predicates =
+            &where_predicates | &associated_type_predicates(&field.ty, &generic_idents);
         let attributes: Vec<&syn::Attribute> = field
             .attrs
             .iter()
@@ -93,13 +102,26 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
         }
     }
+    let where_predicates: Vec<syn::WherePredicate> = where_predicates.into_iter().collect();
     let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
-    let tokens = quote! {
-        impl#impl_generics std::fmt::Debug for #struct_name #ty_generics #where_clause {
-            fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                fmt.debug_struct(stringify!(#struct_name))
-                    #(#field_tokens)*
-                    .finish()
+    let tokens = if where_predicates.len() > 0 {
+        quote! {
+            impl#impl_generics std::fmt::Debug for #struct_name #ty_generics where #(#where_predicates),* {
+                fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    fmt.debug_struct(stringify!(#struct_name))
+                        #(#field_tokens)*
+                        .finish()
+                }
+            }
+        }
+    } else {
+        quote! {
+            impl#impl_generics std::fmt::Debug for #struct_name #ty_generics #where_clause {
+                fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    fmt.debug_struct(stringify!(#struct_name))
+                        #(#field_tokens)*
+                        .finish()
+                }
             }
         }
     };
@@ -144,6 +166,33 @@ fn used_params(ty: &syn::Type, params: &HashSet<syn::Ident>) -> HashSet<syn::Ide
                         if let syn::GenericArgument::Type(ty) = arg {
                             set = &set | &used_params(ty, params);
                         }
+                    }
+                }
+            }
+        }
+    }
+    set
+}
+
+fn associated_type_predicates(
+    ty: &syn::Type,
+    params: &HashSet<syn::Ident>,
+) -> HashSet<syn::WherePredicate> {
+    let mut set = HashSet::new();
+    if let syn::Type::Path(syn::TypePath { ref path, .. }) = ty {
+        if !is_phantom_data_type(path) {
+            if path.segments.len() == 2 && params.contains(&path.segments[0].ident) {
+                let wp = syn::parse2::<syn::WherePredicate>(quote! { #ty: std::fmt::Debug });
+                set.insert(wp.unwrap());
+            }
+            if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                ref args,
+                ..
+            }) = path.segments.last().unwrap().arguments
+            {
+                for arg in args {
+                    if let syn::GenericArgument::Type(ty) = arg {
+                        set = &set | &associated_type_predicates(ty, params);
                     }
                 }
             }
