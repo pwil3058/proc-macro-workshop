@@ -15,6 +15,13 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let struct_name = &ast.ident;
 
+    let mut where_predicates: HashSet<syn::WherePredicate> =
+        if let Some(where_clause) = &ast.generics.where_clause {
+            where_clause.predicates.iter().cloned().collect()
+        } else {
+            HashSet::new()
+        };
+
     let attributes: Vec<&syn::Attribute> = ast
         .attrs
         .iter()
@@ -27,7 +34,33 @@ pub fn derive(input: TokenStream) -> TokenStream {
         match attribute.parse_meta() {
             Ok(syn::Meta::List(syn::MetaList { ref nested, .. })) => {
                 for bound in nested {
-                    eprintln!("bound: {:#?}", bound);
+                    match bound {
+                        syn::NestedMeta::Meta(syn::Meta::NameValue(syn::MetaNameValue {
+                            ref lit,
+                            ..
+                        })) => match lit {
+                            syn::Lit::Str(lit_str) => {
+                                match lit_str.parse::<syn::WherePredicate>() {
+                                    Ok(predicate) => {
+                                        where_predicates.insert(predicate);
+                                    }
+                                    _ => {
+                                        return fail(
+                                            attribute.span(),
+                                            "expected #[debug(bound = \"...\")]",
+                                        )
+                                    }
+                                }
+                            }
+                            _ => return fail(lit.span(), "expected a string"),
+                        },
+                        _ => {
+                            return fail(
+                                bound.span(),
+                                "expected a type bound e.g. \"T: std::fmt::Debug\"",
+                            )
+                        }
+                    }
                 }
             }
             _ => return fail(attribute.span(), "expected #[debug(bound = \"...\")]"),
@@ -39,13 +72,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .type_params()
         .map(|t| t.ident.clone())
         .collect();
-
-    let mut where_predicates: HashSet<syn::WherePredicate> =
-        if let Some(where_clause) = &ast.generics.where_clause {
-            where_clause.predicates.iter().cloned().collect()
-        } else {
-            HashSet::new()
-        };
 
     let mut viable_params: HashSet<syn::Ident> = HashSet::new();
     let mut field_tokens = vec![];
