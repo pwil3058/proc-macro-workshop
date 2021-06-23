@@ -1,201 +1,159 @@
-extern crate proc_macro;
-extern crate proc_macro2;
-
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
-use quote::{quote, quote_spanned};
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Meta, PathArguments, Type};
+use quote::quote;
+use syn::parse_macro_input;
 
 #[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
-    let parsed_input: DeriveInput = parse_macro_input!(input);
-    let struct_name = parsed_input.ident;
-    let builder_name = Ident::new(&format!("{}{}", struct_name, "Builder"), Span::call_site());
+    let ast = parse_macro_input!(input as syn::DeriveInput);
+
+    let struct_name = &ast.ident;
+    let builder_name = Ident::new(&format!("{}Builder", struct_name), Span::call_site());
+
+    let fields = match &ast.data {
+        syn::Data::Struct(syn::DataStruct {
+            fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
+            ..
+        }) => named,
+        _ => panic!("\"#[derive(Builder)]\" only implemented for structs with named fields"),
+    };
+
+    let mut field_name_tokens = vec![];
     let mut declr_tokens = vec![];
-    let mut init_tokens = vec![];
     let mut fn_tokens = vec![];
     let mut build_tokens = vec![];
-    let mut list_tokens = vec![];
-    if let Data::Struct(s) = parsed_input.data {
-        if let Fields::Named(fields) = s.fields {
-            for field in fields.named.iter() {
-                let f_name = field.ident.as_ref().unwrap();
-                println!("{:?}", f_name);
-                println!("attributes: {:?}", field.attrs.len());
-                let mut each: Option<syn::Ident> = None;
-                for attr in field.attrs.iter() {
-                    if attr.path.is_ident("builder") {
-                        if let Ok(meta) = attr.parse_meta() {
-                            match meta {
-                                Meta::List(list) => {
-                                    println!("list: {:?}", list.nested.len());
-                                    for item in list.nested.iter() {
-                                        match item {
-                                            syn::NestedMeta::Meta(imeta) => {
-                                                println!("meta");
-                                                match imeta {
-                                                    Meta::NameValue(inv) => {
-                                                        println!("inv: {:?}", inv.path.get_ident(),);
-                                                        if !inv.path.is_ident("each") {
-                                                            let tokens = quote_spanned! {inv.path.get_ident().unwrap().span()=>
-                                                            compile_error!(
-                                                                "expected `builder(each = \"...\")`"
-                                                            );
-                                                            };
-                                                            return proc_macro::TokenStream::from(
-                                                                tokens,
-                                                            );
-                                                        };
-                                                        if let syn::Lit::Str(lit_str) = &inv.lit {
-                                                            println!(
-                                                                "string: {:?}",
-                                                                lit_str.value()
-                                                            );
-                                                            each = Some(syn::Ident::new(
-                                                                &lit_str.value(),
-                                                                lit_str.span(),
-                                                            ));
-                                                        } else {
-                                                            panic!("panic #4")
-                                                        }
-                                                    }
-                                                    _ => panic!("panic #3"),
-                                                }
-                                            }
-                                            _ => panic!("panic #2"),
-                                        }
-                                    }
-                                }
-                                _ => panic!("panic #1"),
+    for field in fields.iter() {
+        let field_name = field.ident.as_ref().unwrap();
+        let msg = format!("'{}' field has not been set", stringify!(#field_name));
+        field_name_tokens.push(quote! {#field_name,});
+        let mut each: Option<syn::Ident> = None;
+        for attr in field.attrs.iter().filter(|a| a.path.is_ident("builder")) {
+            match attr.parse_meta() {
+                Ok(syn::Meta::List(ref list)) => {
+                    //syn::MetaList { ref nested, .. })) => {
+                    assert_eq!(list.nested.len(), 1);
+                    match list.nested.first() {
+                        Some(syn::NestedMeta::Meta(syn::Meta::NameValue(syn::MetaNameValue {
+                            ref path,
+                            ref lit,
+                            ..
+                        }))) => {
+                            if !path.is_ident("each") {
+                                return syn::Error::new_spanned(
+                                    list,
+                                    "expected `builder(each = \"...\")`",
+                                )
+                                .to_compile_error()
+                                .into();
+                            }
+                            if let syn::Lit::Str(ref lit_str) = lit {
+                                each = Some(syn::Ident::new(&lit_str.value(), lit_str.span()))
+                            } else {
+                                panic!("whatever")
                             }
                         }
+                        _ => panic!("whatever"),
                     }
                 }
-                if let Type::Path(ref f_path_type) = field.ty {
-                    let token = quote! {
-                        #f_name: std::option::Option::None,
+                _ => panic! {"Expected 'each=<name>'"},
+            }
+        }
+        match field.ty {
+            syn::Type::Path(syn::TypePath { ref path, .. }) => {
+                let segment = path.segments.first().unwrap();
+                if segment.ident == "Option" {
+                    assert!(each.is_none());
+                    let option_arg = match segment.arguments {
+                        syn::PathArguments::AngleBracketed(ref args) => &args.args,
+                        _ => panic!("expected angle brackets"),
                     };
-                    init_tokens.push(token);
-                    let token = quote! {
-                        #f_name,
-                    };
-                    list_tokens.push(token);
-                    let segment = f_path_type.path.segments.first().unwrap();
-                    match segment.ident.to_string().as_str() {
-                        "Option" => {
-                            let f_type =
-                                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                                    &args.args
-                                } else {
-                                    panic!("Expected angle brackets");
-                                };
-                            println!("option");
-                            let token = quote! {
-                                #f_name: std::option::Option<#f_type>,
-                            };
-                            declr_tokens.push(token);
-                            let token = quote! {
-                                pub fn #f_name(&mut self, #f_name: #f_type) -> &mut Self {
-                                    self.#f_name = std::option::Option::Some(#f_name);
-                                    self
-                                }
-                            };
-                            fn_tokens.push(token);
-                            let token = quote! {
-                                let #f_name;
-                                if let Some(ref val) = self.#f_name {
-                                    #f_name = std::option::Option::Some(val.clone());
-                                } else {
-                                    #f_name = std::option::Option::None
-                                };
-                            };
-                            build_tokens.push(token);
+                    declr_tokens.push(quote! {
+                        #field_name: std::option::Option<#option_arg>,
+                    });
+                    fn_tokens.push(quote! {
+                        pub fn #field_name(&mut self, #field_name: #option_arg) -> &mut Self {
+                            self.#field_name = Some(#field_name);
+                            self
                         }
-                        other => {
-                            println!("other: {:?}", other);
-                            let f_type = f_path_type;
-                            let token = quote! {
-                                #f_name: std::option::Option<#f_type>,
-                            };
-                            declr_tokens.push(token);
-                            let token = quote! {
-                                pub fn #f_name(&mut self, #f_name: #f_type) -> &mut Self {
-                                    self.#f_name = Some(#f_name);
-                                    self
-                                }
-                            };
-                            fn_tokens.push(token);
-                            if let Some(each) = each {
-                                if other != "Vec" {
-                                    panic!("expected 'Vec'");
-                                };
-                                let token = quote! {
-                                    pub fn #each(&mut self, #each: String) -> &mut Self {
-                                        let v = self.#f_name.get_or_insert(vec![]);
-                                        (*v).push(#each);
-                                        self
-                                    }
-                                };
-                                fn_tokens.push(token);
-                                let token = quote! {
-                                    let #f_name;
-                                    if let std::option::Option::Some(ref val) = self.#f_name {
-                                        #f_name = val.clone();
-                                    } else {
-                                        #f_name = vec![];
-                                    };
-                                };
-                                build_tokens.push(token);
-                            } else {
-                                let msg =
-                                    format!("'{}' field has not been set", stringify!(#f_name));
-                                let token = quote! {
-                                    let #f_name;
-                                    if let std::option::Option::Some(ref val) = self.#f_name {
-                                        #f_name = val.clone();
-                                    } else {
-                                        return std::result::Result::Err(#msg.to_string());
-                                    };
-                                };
-                                build_tokens.push(token);
+                    });
+                    build_tokens.push(quote! {
+                        let #field_name = match self.#field_name {
+                            Some(ref #field_name) => Some(#field_name.clone()),
+                            None => None,
+                        };
+                    });
+                } else if let Some(each) = each {
+                    assert_eq!(segment.ident, "Vec");
+                    let field_type = &field.ty;
+                    declr_tokens.push(quote! {
+                        #field_name: #field_type,
+                    });
+                    let vec_type = match segment.arguments {
+                        syn::PathArguments::AngleBracketed(ref args) => &args.args,
+                        _ => panic!("expected angle brackets"),
+                    };
+                    fn_tokens.push(quote! {
+                        pub fn #each(&mut self, #each: #vec_type) -> &mut Self {
+                            self.#field_name.push(#each);
+                            self
+                        }
+                    });
+                    if each.to_string() != field_name.to_string() {
+                        fn_tokens.push(quote! {
+                            pub fn #field_name(&mut self, #field_name: #field_type) -> &mut Self {
+                                self.#field_name.extend(#field_name);
+                                self
                             }
-                        }
+                        });
                     }
+                    build_tokens.push(quote! {
+                        let #field_name = self.#field_name.clone();
+                    });
                 } else {
-                    panic!("'Builder' can only be derived normal field types")
+                    let field_type = &field.ty;
+                    declr_tokens.push(quote! {
+                        #field_name: std::option::Option<#field_type>,
+                    });
+                    fn_tokens.push(quote! {
+                        pub fn #field_name(&mut self, #field_name: #field_type) -> &mut Self {
+                            self.#field_name = Some(#field_name);
+                            self
+                        }
+                    });
+                    build_tokens.push(quote! {
+                        let #field_name = match self.#field_name {
+                            Some(ref #field_name) => #field_name.clone(),
+                            None => return Err(#msg.to_string().into()),
+                        };
+                    });
                 }
             }
-        } else {
-            panic!("'Builder' can only be derived for structs with named fields.")
-        }
-    } else {
-        panic!("'Builder' can only be derived for structs.")
+            _ => panic!("expected TypePath"),
+        };
     }
 
-    let tokens = quote! {
+    let tokens = quote!(
+        #[derive(Default)]
         pub struct #builder_name {
             #(#declr_tokens)*
-        }
-
-        impl #struct_name {
-            pub fn builder() -> #builder_name {
-                #builder_name {
-                    #(#init_tokens)*
-                }
-            }
         }
 
         impl #builder_name {
             #(#fn_tokens)*
 
-            pub fn build(&mut self) -> std::result::Result<#struct_name, String> {
+            pub fn build(&self) -> std::result::Result<#struct_name, std::boxed::Box<dyn std::error::Error>> {
                 #(#build_tokens)*
-                std::result::Result::Ok(#struct_name {
-                    #(#list_tokens)*
-                })
+
+                Ok(#struct_name{#(#field_name_tokens)*})
             }
         }
-    };
 
-    proc_macro::TokenStream::from(tokens)
+        impl #struct_name {
+            pub fn builder() -> #builder_name {
+                #builder_name::default()
+            }
+        }
+    );
+
+    TokenStream::from(tokens)
 }
